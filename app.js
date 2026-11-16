@@ -404,6 +404,8 @@ function nearestDayWithLessons(from) {
 const SCREENS = {};
 
 SCREENS.home = () => {
+  // Home always opens on today: "Ближайшее занятие" must match the highlighted date.
+  ui.date = todayISO();
   const el = h(`<section class="screen tab-screen has-grad">
     <div class="screen-bg"></div>
     <div class="scroll">
