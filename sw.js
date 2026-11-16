@@ -1,5 +1,5 @@
 // Offline app shell: cache-first for own files, refreshed in the background.
-const CACHE = 'trainer-journal-v5';
+const CACHE = 'trainer-journal-v6';
 const SHELL = [
   './',
   './index.html',

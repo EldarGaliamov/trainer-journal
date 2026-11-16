@@ -711,6 +711,15 @@ ul { list-style: none; margin: 0; padding: 0; }
 @keyframes toastIn { from { transform: translateY(16px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes toastOut { to { transform: translateY(8px); opacity: 0; } }
 
+/* ---------- Tab switch: content shifts toward the chosen tab, background stays ---------- */
+.screen.tab-in { background: transparent; z-index: 2; }
+.screen.tab-in .screen-bg { animation: fadeIn .24s ease both; }
+.screen.tab-in > .scroll { animation: tabIn .28s var(--ease-out) both; }
+.screen.tab-out { z-index: 1; }
+.screen.tab-out > .scroll { animation: tabOut .14s ease both; }
+@keyframes tabIn { from { opacity: 0; transform: translate3d(calc(var(--dx, 1) * 20px), 0, 0); } to { opacity: 1; transform: none; } }
+@keyframes tabOut { to { opacity: 0; transform: translate3d(calc(var(--dx, 1) * -12px), 0, 0); } }
+
 /* ---------- Shared-element morph ---------- */
 .screen.morph-in { background: transparent; z-index: 2; }
 .screen.morph-in .screen-bg { visibility: hidden; }

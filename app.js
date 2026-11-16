@@ -352,6 +352,8 @@ function render() {
   } else if (isTab(r)) {
     const wasTab = current && isTab(current.route);
     dir = !current ? 'none' : wasTab ? 'fade' : 'pop';
+    // sibling tabs: content shifts toward the chosen tab (right tab → enters from the right)
+    if (wasTab && current.route.name !== r.name) tabShift = Math.sign(TABS.indexOf(r.name) - TABS.indexOf(current.route.name));
     stack.length = 0; stack.push(r.key);
   } else if (stack.length > 1 && stack[stack.length - 2] === r.key) {
     stack.pop(); dir = 'pop';
@@ -376,11 +378,24 @@ function render() {
   booted = true;
 }
 
+let tabShift = 0;
 function mount(el, dir) {
   const old = current && current.el;
+  const shift = tabShift; tabShift = 0;
   if (reduceMotion() && dir !== 'none') dir = 'fade';
+  // rapid switching: drop screens still leaving from an earlier transition
+  $$('.screen', app).forEach(s => { if (s !== old) s.remove(); });
   app.appendChild(el);
   if (!old || dir === 'none') { if (old) old.remove(); return; }
+  if (dir === 'fade' && shift && !reduceMotion()) {
+    el.style.setProperty('--dx', shift);
+    old.style.setProperty('--dx', shift);
+    el.classList.add('tab-in');
+    old.classList.add('tab-out');
+    old.style.pointerEvents = 'none';
+    setTimeout(() => { old.remove(); el.classList.remove('tab-in'); }, 280);
+    return;
+  }
   const m = findMorph(old, el, dir);
   if (m) { runMorph(old, el, m); return; }
   el.classList.add('enter-' + dir, 'animating');
