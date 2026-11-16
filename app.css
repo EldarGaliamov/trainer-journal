@@ -387,7 +387,6 @@ ul { list-style: none; margin: 0; padding: 0; }
   width: 88px; height: 48px;
   background: #fff;
   border-radius: var(--r-pill);
-  transition: transform .38s var(--ease-drawer);
 }
 .nav-add {
   width: 56px; height: 56px; border-radius: 50%;
@@ -706,10 +705,21 @@ ul { list-style: none; margin: 0; padding: 0; }
   max-width: 100%;
 }
 .toast.no-act { padding-right: 20px; }
+.toast { touch-action: none; }
 .toast button { height: 36px; padding: 0 14px; border-radius: var(--r-pill); background: var(--bg-contrast-action); color: #fff; font-weight: 500; font-size: 14px; flex: none; }
 .toast.out { animation: toastOut .2s ease forwards; }
 @keyframes toastIn { from { transform: translateY(16px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes toastOut { to { transform: translateY(8px); opacity: 0; } }
+
+/* ---------- Shared-element morph ---------- */
+.screen.morph-in { background: transparent; z-index: 2; }
+.screen.morph-in .screen-bg { visibility: hidden; }
+.screen.morph-in.tab-screen::after { animation: fadeIn .3s ease both; }
+.morph-fade { animation: rise .42s var(--ease-out) both .08s; }
+.screen.morph-out { z-index: 1; }
+.screen.morph-out > .scroll > *, .screen.morph-out > .dock { animation: fadeOut .18s ease forwards; }
+.morph-target { position: relative; z-index: 4; will-change: transform; }
+.morph-target > * { animation: fadeIn .26s ease both .14s; }
 
 /* ---------- Splash (installed app launch) ---------- */
 #splash { position: fixed; inset: 0; z-index: 100; background: var(--grad); display: grid; place-items: center; transition: opacity .3s ease; }

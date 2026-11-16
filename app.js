@@ -235,6 +235,80 @@ const ui = {
   studentQuery: '',
 };
 
+
+/* ---------- physics ---------- */
+// Spring in Apple terms: response (s) and damping ratio (1 = no overshoot).
+// Seeded with the finger's velocity (px/s) so release continues the gesture seamlessly.
+function spring({ from, to, velocity = 0, response = 0.4, damping = 1, onUpdate, onDone }) {
+  const k = Math.pow(2 * Math.PI / response, 2);
+  const c = 4 * Math.PI * damping / response;
+  let x = from, v = velocity, last = performance.now(), raf = 0, stopped = false;
+  const finish = () => { if (stopped) return; stopped = true; clearTimeout(guard); cancelAnimationFrame(raf); onUpdate(to); onDone && onDone(); };
+  const step = now => {
+    if (stopped) return;
+    const dt = Math.min(0.064, (now - last) / 1000); last = now;
+    const n = Math.max(1, Math.ceil(dt / 0.004)), hstep = dt / n;
+    for (let i = 0; i < n; i++) { const a = -k * (x - to) - c * v; v += a * hstep; x += v * hstep; }
+    if (Math.abs(v) < 8 && Math.abs(x - to) < 0.4) { finish(); return; }
+    onUpdate(x);
+    raf = requestAnimationFrame(step);
+  };
+  // rAF is throttled in background tabs: never leave a sheet half-closed
+  const guard = setTimeout(finish, 1500);
+  if (reduceMotion()) { finish(); return { stop() {} }; }
+  raf = requestAnimationFrame(step);
+  return { stop() { stopped = true; clearTimeout(guard); cancelAnimationFrame(raf); } };
+}
+// Apple rubber-band: the further past the edge, the less it follows.
+const rubberband = (over, dim, c = 0.55) => (over * dim * c) / (dim + c * Math.abs(over));
+const readTY = el => { const t = getComputedStyle(el).transform; return t && t !== 'none' ? new DOMMatrix(t).m42 : 0; };
+
+/* ---------- shared-element morph ---------- */
+// The tapped lesson card becomes the lesson header (and back). One object travels; the rest crossfades.
+function findMorph(old, el, dir) {
+  if (reduceMotion() || (dir !== 'push' && dir !== 'pop')) return null;
+  const vis = n => { if (!n) return false; const r = n.getBoundingClientRect(); return r.height > 0 && r.bottom > 0 && r.top < innerHeight; };
+  if (dir === 'push') {
+    const hero = el.querySelector('.hero[data-lid]');
+    const src = hero && old.querySelector(`[data-lid="${hero.dataset.lid}"]:not(.hero)`);
+    return vis(src) ? { from: src, to: hero } : null;
+  }
+  const hero = old.querySelector('.hero[data-lid]');
+  const dst = hero && el.querySelector(`[data-lid="${hero.dataset.lid}"]:not(.hero)`);
+  return vis(hero) && vis(dst) ? { from: hero, to: dst } : null;
+}
+function runMorph(old, el, m) {
+  const a = m.from.getBoundingClientRect(), b = m.to.getBoundingClientRect();
+  const fromBg = getComputedStyle(m.from).backgroundColor;
+  // fade everything except the travelling element and its ancestors
+  const faded = [];
+  for (let n = m.to; n && n !== el; n = n.parentElement) {
+    for (const sib of n.parentElement ? n.parentElement.children : []) {
+      if (sib !== n && !sib.classList.contains('screen-bg')) { sib.classList.add('morph-fade'); faded.push(sib); }
+    }
+  }
+  el.classList.add('morph-in');
+  old.classList.add('morph-out');
+  old.style.pointerEvents = 'none';
+  m.from.style.visibility = 'hidden';
+  const t = m.to;
+  t.classList.add('morph-target');
+  t.style.transformOrigin = '0 0';
+  t.style.transform = `translate3d(${a.left - b.left}px,${a.top - b.top}px,0) scale(${a.width / b.width},${a.height / b.height})`;
+  t.style.backgroundColor = fromBg;
+  void t.offsetWidth;
+  t.style.transition = 'transform .5s var(--ease-drawer), background-color .35s ease';
+  t.style.transform = 'none';
+  t.style.backgroundColor = '';
+  setTimeout(() => {
+    old.remove();
+    el.classList.remove('morph-in');
+    faded.forEach(n => n.classList.remove('morph-fade'));
+    t.classList.remove('morph-target');
+    t.style.transition = t.style.transform = t.style.transformOrigin = '';
+  }, 520);
+}
+
 /* ---------- router ---------- */
 const app = $('#app');
 const nav = $('#nav');
@@ -307,6 +381,8 @@ function mount(el, dir) {
   if (reduceMotion() && dir !== 'none') dir = 'fade';
   app.appendChild(el);
   if (!old || dir === 'none') { if (old) old.remove(); return; }
+  const m = findMorph(old, el, dir);
+  if (m) { runMorph(old, el, m); return; }
   el.classList.add('enter-' + dir, 'animating');
   old.classList.add('leave-' + dir, 'animating');
   old.style.pointerEvents = 'none';
@@ -319,7 +395,20 @@ function setNav(name) {
   const tabs = $$('.nav-tab', nav);
   const i = TABS.indexOf(name);
   tabs.forEach((t, j) => { t.classList.toggle('on', j === i); t.setAttribute('aria-current', j === i ? 'page' : 'false'); });
-  $('.nav-indicator', nav).style.transform = `translateX(${i * 88}px)`;
+  const ind = $('.nav-indicator', nav);
+  const to = i * 88;
+  const fromX = new DOMMatrix(getComputedStyle(ind).transform === 'none' ? undefined : getComputedStyle(ind).transform).m41;
+  if (ind._anim) ind._anim.cancel();
+  ind.style.transform = `translateX(${to}px)`;
+  const d = to - fromX;
+  if (reduceMotion() || Math.abs(d) < 1 || !ind.animate || nav.classList.contains('hidden')) return;
+  ind.style.transformOrigin = d > 0 ? 'left center' : 'right center';
+  const stretch = 1 + Math.min(0.32, Math.abs(d) / 88 * 0.16);
+  ind._anim = ind.animate([
+    { transform: `translateX(${fromX}px) scaleX(1)` },
+    { transform: `translateX(${fromX + d * 0.5}px) scaleX(${stretch})`, offset: 0.38 },
+    { transform: `translateX(${to}px) scaleX(1)` },
+  ], { duration: 460, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' });
 }
 
 /* ---------- shared pieces ---------- */
@@ -380,7 +469,7 @@ function lessonRow(l, i = 0) {
   const href = l.record ? `#/done/${l.id}` : `#/lesson/${l.id}`;
   return `<a class="lrow" href="${href}" style="--i:${i}">
     <div class="lrow-time tnum"><b>${l.start}</b><span>${l.end}</span></div>
-    <div class="lrow-card">
+    <div class="lrow-card" data-lid="${l.id}">
       <div class="lrow-top"><span class="lrow-title t-h4">${esc(l.title)}</span><span class="go-dot">${I.chev}</span></div>
       <div class="chips">${lessonChips(l)}</div>
     </div></a>`;
@@ -430,7 +519,7 @@ SCREENS.home = () => {
       const none = next.studentIds.length - yes - no;
       const href = next.record ? `#/done/${next.id}` : `#/lesson/${next.id}`;
       html += `<div class="next" style="--i:1">
-        <div class="next-inner">
+        <div class="next-inner" data-lid="${next.id}">
           <div class="next-time t-lr tnum">${next.start}–${next.end}</div>
           <div class="next-title t-h3">${esc(next.title)}</div>
           <div class="next-meta t-meta"><span>${esc(next.room || '')}</span><span>${next.studentIds.length} ${plural(next.studentIds.length, 'ученик', 'ученика', 'учеников')}</span>${next.record ? '<span class="chip ok">Учтено</span>' : ''}</div>
@@ -557,7 +646,7 @@ const needsChoice = (l, sid, draft) => {
 };
 
 function lessonHero(l) {
-  return `<div class="hero">
+  return `<div class="hero" data-lid="${l.id}">
     <small>${longDate(l.date)}</small>
     <h2 class="t-h3">${esc(l.title)}</h2>
     <div class="meta tnum"><span>${l.start}–${l.end}</span><span>${esc(l.room || '')}</span></div>
@@ -1128,7 +1217,9 @@ function openSheet(firstPage) {
       document.removeEventListener('keydown', onKey);
       activeSheet = null;
       if (instant) { bd.remove(); sh.remove(); return; }
-      sh.classList.remove('show'); sh.style.transform = '';
+      if (sh._spring) { sh._spring.stop(); sh._spring = null; }
+      sh.classList.remove('dragging', 'show'); sh.style.transform = '';
+      bd.style.transition = ''; bd.style.opacity = '';
       bd.classList.remove('show');
       setTimeout(() => { bd.remove(); sh.remove(); }, 450);
       prevFocus && prevFocus.focus && prevFocus.focus({ preventScroll: true });
@@ -1159,39 +1250,59 @@ function openSheet(firstPage) {
   document.addEventListener('keydown', onKey);
   bd.addEventListener('click', () => api.close());
 
-  // drag to dismiss
-  let startY = 0, lastY = 0, lastT = 0, vel = 0, dragging = false;
+  // drag to dismiss: 1:1 while held, spring with the finger's velocity on release
+  let drag = null;
+  const setY = y => {
+    sh.style.transform = `translate3d(-50%, ${y}px, 0)`;
+    bd.style.opacity = String(Math.max(0, 1 - Math.max(0, y) / Math.max(1, sh.offsetHeight)));
+  };
   sh.addEventListener('pointerdown', e => {
-    if (!e.target.closest('.grab, .sheet-head') || e.target.closest('button')) return;
-    dragging = true; startY = lastY = e.clientY; lastT = performance.now(); vel = 0;
+    if (!e.target.closest('.grab, .sheet-head') || e.target.closest('button') || closed) return;
+    if (sh._spring) { sh._spring.stop(); sh._spring = null; }
+    const y0 = readTY(sh); // catch it wherever it is right now
     sh.classList.add('dragging');
-    sh.setPointerCapture(e.pointerId);
+    bd.style.transition = 'none';
+    drag = { id: e.pointerId, startY: e.clientY, y0, y: y0, lastY: e.clientY, lastT: performance.now(), t0: performance.now(), v: 0 };
+    setY(y0);
+    try { sh.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
   });
   sh.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const dy = e.clientY - startY;
+    if (!drag || e.pointerId !== drag.id) return;
     const now = performance.now();
-    vel = (e.clientY - lastY) / Math.max(1, now - lastT);
-    lastY = e.clientY; lastT = now;
-    const y = dy > 0 ? dy : dy * 0.15; // rubber-band upward
-    sh.style.transform = `translate(-50%, ${y}px)`;
-    bd.style.opacity = String(Math.max(0, 1 - Math.max(0, dy) / 500));
+    const raw = drag.y0 + (e.clientY - drag.startY);
+    drag.y = raw >= 0 ? raw : rubberband(raw, sh.offsetHeight);
+    const inst = (e.clientY - drag.lastY) / Math.max(1, now - drag.lastT);
+    drag.v = drag.v * 0.4 + inst * 0.6;
+    drag.lastY = e.clientY; drag.lastT = now;
+    setY(drag.y);
   });
   const end = e => {
-    if (!dragging) return;
-    dragging = false;
-    sh.classList.remove('dragging');
-    const dy = e.clientY - startY;
-    bd.style.opacity = '';
-    if (dy > 120 || vel > 0.5) api.close();
-    else sh.style.transform = '';
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    const H = sh.offsetHeight;
+    const avg = (d.y - d.y0) / Math.max(1, performance.now() - d.t0);
+    const dismiss = d.y > H * 0.4 || (d.y > 24 && (avg > 0.11 || d.v > 0.6));
+    const vpx = d.v * 1000;
+    if (dismiss) {
+      closed = true;
+      document.removeEventListener('keydown', onKey);
+      activeSheet = null;
+      sh._spring = spring({ from: d.y, to: H + 24, velocity: Math.max(vpx, 300), response: 0.32, damping: 1, onUpdate: setY, onDone: () => { bd.remove(); sh.remove(); } });
+      prevFocus && prevFocus.focus && prevFocus.focus({ preventScroll: true });
+    } else {
+      // a drag applied force, so a touch of bounce on the way back is physical
+      sh._spring = spring({ from: d.y, to: 0, velocity: vpx, response: 0.3, damping: 0.8, onUpdate: setY, onDone: () => {
+        sh._spring = null; sh.classList.remove('dragging'); sh.style.transform = ''; bd.style.opacity = ''; bd.style.transition = '';
+      } });
+    }
   };
   sh.addEventListener('pointerup', end);
   sh.addEventListener('pointercancel', end);
 
   pages.push(firstPage);
   show(firstPage, 'fwd');
-  requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('show'); sh.classList.add('show'); }));
+  void sh.offsetHeight; // commit the closed position, then transition to open
+  bd.classList.add('show'); sh.classList.add('show');
   setTimeout(() => sh.focus({ preventScroll: true }), 60);
   activeSheet = api;
   return api;
@@ -1367,6 +1478,31 @@ function toast(text, actionLabel, action) {
   t.addEventListener('pointerleave', () => { timer = setTimeout(hide, 2000); });
   const b = t.querySelector('button');
   b && b.addEventListener('click', () => { hide(); action && action(); });
+  let g = null;
+  t.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    clearTimeout(timer);
+    g = { id: e.pointerId, y0: e.clientY, y: 0, lastY: e.clientY, lastT: performance.now(), v: 0 };
+    try { t.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    t.style.animation = 'none';
+  });
+  t.addEventListener('pointermove', e => {
+    if (!g || e.pointerId !== g.id) return;
+    const raw = e.clientY - g.y0, now = performance.now();
+    g.y = raw > 0 ? raw : rubberband(raw, 120);
+    g.v = (e.clientY - g.lastY) / Math.max(1, now - g.lastT); g.lastY = e.clientY; g.lastT = now;
+    t.style.transform = `translate3d(0,${g.y}px,0)`;
+    t.style.opacity = String(Math.max(0, 1 - Math.max(0, g.y) / 120));
+  });
+  const up = e => {
+    if (!g || e.pointerId !== g.id) return;
+    const s = g; g = null;
+    const apply = y => { t.style.transform = `translate3d(0,${y}px,0)`; t.style.opacity = String(Math.max(0, 1 - Math.max(0, y) / 120)); };
+    if (s.y > 32 || s.v > 0.3) spring({ from: s.y, to: 140, velocity: Math.max(s.v * 1000, 200), response: 0.3, damping: 1, onUpdate: apply, onDone: () => t.remove() });
+    else { spring({ from: s.y, to: 0, velocity: s.v * 1000, response: 0.3, damping: 0.8, onUpdate: apply }); timer = setTimeout(hide, 2000); }
+  };
+  t.addEventListener('pointerup', up);
+  t.addEventListener('pointercancel', up);
 }
 
 /* ---------- boot ---------- */
@@ -1404,6 +1540,13 @@ function initSwipeBack() {
       if (!scr) { g = null; return; }
       typo(scr.el);
       g.prev = scr; g.route = r; g.cur = current.el;
+      const w = W();
+      g.apply = x => {
+        const p = Math.max(0, Math.min(1, x / w));
+        g.cur.style.transform = `translate3d(${x}px,0,0)`;
+        g.prev.el.style.transform = `translate3d(${-30 * (1 - p)}%,0,0)`;
+        g.prev.el.style.opacity = String(.85 + .15 * p);
+      };
       scr.el.style.transform = 'translate3d(-30%,0,0)';
       scr.el.style.opacity = '.85';
       app.insertBefore(scr.el, g.cur);
@@ -1415,25 +1558,15 @@ function initSwipeBack() {
     const now = performance.now();
     g.v = (e.clientX - g.lastX) / Math.max(1, now - g.lastT);
     g.lastX = e.clientX; g.lastT = now;
-    const p = Math.max(0, Math.min(1, dx / W()));
-    g.cur.style.transform = `translate3d(${p * 100}%,0,0)`;
-    g.prev.el.style.transform = `translate3d(${-30 * (1 - p)}%,0,0)`;
-    g.prev.el.style.opacity = String(.85 + .15 * p);
+    g.apply(Math.max(0, dx));
   });
   const end = e => {
     if (!g || e.pointerId !== g.id) return;
     const st = g; g = null;
     if (!st.started) return;
-    const p = (e.clientX - st.x0) / W();
-    const commit = p > .35 || st.v > .45;
-    const ease = 'transform .3s cubic-bezier(0.32, 0.72, 0, 1), opacity .3s ease';
-    st.cur.style.transition = ease; st.prev.el.style.transition = ease;
-    requestAnimationFrame(() => {
-      st.cur.style.transform = commit ? 'translate3d(100%,0,0)' : 'none';
-      st.prev.el.style.transform = commit ? 'none' : 'translate3d(-30%,0,0)';
-      st.prev.el.style.opacity = commit ? '1' : '.85';
-    });
-    setTimeout(() => {
+    const x = Math.max(0, e.clientX - st.x0);
+    const commit = x / W() > .35 || st.v > .35;
+    spring({ from: x, to: commit ? W() : 0, velocity: st.v * 1000, response: 0.34, damping: 1, onUpdate: st.apply, onDone: () => {
       st.prev.el.style.transition = st.prev.el.style.transform = st.prev.el.style.opacity = '';
       st.prev.el.classList.remove('animating');
       if (commit) {
@@ -1450,7 +1583,7 @@ function initSwipeBack() {
         st.cur.style.transition = st.cur.style.transform = '';
         st.cur.classList.remove('swiping', 'animating');
       }
-    }, 320);
+    } });
   };
   app.addEventListener('pointerup', end);
   app.addEventListener('pointercancel', end);
