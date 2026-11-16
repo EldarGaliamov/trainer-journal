@@ -1,0 +1,25 @@
+{
+  "name": "Журнал тренера",
+  "short_name": "Журнал",
+  "description": "Посещения, абонементы и оплаты для частного преподавателя",
+  "lang": "ru",
+  "id": "./",
+  "start_url": "./#/",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone"],
+  "orientation": "portrait",
+  "background_color": "#FFD9CC",
+  "theme_color": "#FFD0D8",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Занятия", "url": "./#/schedule" },
+    { "name": "Ученики", "url": "./#/students" }
+  ]
+}

@@ -225,6 +225,10 @@ function summarize(l, draft) {
 }
 
 /* ---------- UI state ---------- */
+let booted = false;
+const haptic = (p = 8) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* unsupported */ } };
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
 const ui = {
   date: todayISO(),
   drafts: {},
@@ -261,7 +265,9 @@ function back(fallback = '#/') {
   else go(fallback);
 }
 
+let skipRender = false;
 function render() {
+  if (skipRender) { skipRender = false; return; }
   const r = parseRoute(location.hash);
   let dir;
   const prevKey = stack[stack.length - 1];
@@ -293,6 +299,7 @@ function render() {
   // nav
   nav.classList.toggle('hidden', !isTab(r));
   if (isTab(r)) setNav(r.name);
+  booted = true;
 }
 
 function mount(el, dir) {
@@ -300,10 +307,10 @@ function mount(el, dir) {
   if (reduceMotion() && dir !== 'none') dir = 'fade';
   app.appendChild(el);
   if (!old || dir === 'none') { if (old) old.remove(); return; }
-  el.classList.add('enter-' + dir);
-  old.classList.add('leave-' + dir);
+  el.classList.add('enter-' + dir, 'animating');
+  old.classList.add('leave-' + dir, 'animating');
   old.style.pointerEvents = 'none';
-  const done = () => { old.remove(); el.classList.remove('enter-' + dir); };
+  const done = () => { old.remove(); el.classList.remove('enter-' + dir, 'animating'); };
   el.addEventListener('animationend', function f(e) { if (e.target === el) { el.removeEventListener('animationend', f); done(); } });
   setTimeout(() => { if (old.isConnected) done(); }, 600);
 }
@@ -312,7 +319,7 @@ function setNav(name) {
   const tabs = $$('.nav-tab', nav);
   const i = TABS.indexOf(name);
   tabs.forEach((t, j) => { t.classList.toggle('on', j === i); t.setAttribute('aria-current', j === i ? 'page' : 'false'); });
-  $('.nav-indicator', nav).style.transform = `translateX(${i * 72}px)`;
+  $('.nav-indicator', nav).style.transform = `translateX(${i * 88}px)`;
 }
 
 /* ---------- shared pieces ---------- */
@@ -342,9 +349,23 @@ function weekStrip(selected, onSelect) {
   });
   return el;
 }
+// On open: the selected day sits second, after the previous day (as in the mockup).
+// On tap: scroll only if the day is partly hidden.
 function centerDay(strip, btn, smooth) {
-  const target = btn.offsetLeft - strip.clientWidth / 2 + 44;
-  strip.scrollTo({ left: Math.max(0, target), behavior: smooth && !reduceMotion() ? 'smooth' : 'auto' });
+  const behavior = smooth && !reduceMotion() ? 'smooth' : 'auto';
+  if (!smooth) {
+    // start the visible row on Monday of the selected week, keeping the selected day in view
+    const d = parseISO(btn.dataset.d);
+    const mon = iso(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)));
+    const monBtn = strip.querySelector(`[data-d="${mon}"]`);
+    let left = monBtn ? monBtn.offsetLeft - 16 : btn.offsetLeft - 72;
+    if (btn.offsetLeft + 92 - left > strip.clientWidth - 16) left = btn.offsetLeft - 72;
+    strip.scrollTo({ left: Math.max(0, left) });
+    return;
+  }
+  const l = btn.offsetLeft - strip.scrollLeft, r = l + 92;
+  if (l < 16) strip.scrollTo({ left: btn.offsetLeft - 16 - 56, behavior });
+  else if (r > strip.clientWidth - 16) strip.scrollTo({ left: btn.offsetLeft + 92 - strip.clientWidth + 16 + 56, behavior });
 }
 
 function lessonChips(l) {
@@ -359,7 +380,7 @@ function lessonRow(l, i = 0) {
   return `<a class="lrow" href="${href}" style="--i:${i}">
     <div class="lrow-time tnum"><b>${l.start}</b><span>${l.end}</span></div>
     <div class="lrow-card">
-      <div class="lrow-top"><span class="lrow-title">${esc(l.title)}</span><span class="go-dot">${I.chev}</span></div>
+      <div class="lrow-top"><span class="lrow-title t-h4">${esc(l.title)}</span><span class="go-dot">${I.chev}</span></div>
       <div class="chips">${lessonChips(l)}</div>
     </div></a>`;
 }
@@ -386,7 +407,7 @@ SCREENS.home = () => {
   const el = h(`<section class="screen tab-screen has-grad">
     <div class="screen-bg"></div>
     <div class="scroll">
-      <h1 class="month-title" data-month></h1>
+      <h1 class="month-title t-h1" data-month></h1>
       <div data-strip></div>
       <div data-day class="day-switch"></div>
     </div>
@@ -399,7 +420,7 @@ SCREENS.home = () => {
     const next = nextLessonFor(date);
     const rest = lessonsOn(date).filter(l => l !== next);
     let html = `<div class="${initial ? 'stagger' : ''}">`;
-    html += `<h2 class="label" style="--i:0">${isToday ? 'Ближайшее занятие' : longDate(date)}</h2>`;
+    html += `<h2 class="label t-lm" style="--i:0">${isToday ? 'Ближайшее занятие' : longDate(date)}</h2>`;
     if (next) {
       const yes = next.studentIds.filter(id => next.rsvp && next.rsvp[id] === 'yes').length;
       const no = next.studentIds.filter(id => next.rsvp && next.rsvp[id] === 'no').length;
@@ -407,23 +428,23 @@ SCREENS.home = () => {
       const href = next.record ? `#/done/${next.id}` : `#/lesson/${next.id}`;
       html += `<div class="next" style="--i:1">
         <div class="next-inner">
-          <div class="next-time tnum">${next.start}–${next.end}</div>
-          <div class="next-title">${esc(next.title)}</div>
-          <div class="next-meta"><span>${esc(next.room || '')}</span><span>${next.studentIds.length} ${plural(next.studentIds.length, 'ученик', 'ученика', 'учеников')}</span>${next.record ? '<span class="chip ok">Учтено</span>' : ''}</div>
+          <div class="next-time t-lr tnum">${next.start}–${next.end}</div>
+          <div class="next-title t-h3">${esc(next.title)}</div>
+          <div class="next-meta t-meta"><span>${esc(next.room || '')}</span><span>${next.studentIds.length} ${plural(next.studentIds.length, 'ученик', 'ученика', 'учеников')}</span>${next.record ? '<span class="chip ok">Учтено</span>' : ''}</div>
           <div class="rsvp tnum"><div><b>${yes}</b><span>Будут</span></div><div><b>${no}</b><span>Не будут</span></div><div><b>${none}</b><span>Без ответа</span></div></div>
         </div>
         <a class="next-go" href="${href}">${next.record ? 'Открыть итог' : 'Перейти к занятию'}<span class="arrow">${I.arrow}</span></a>
       </div>`;
     } else {
       html += `<div class="next" style="--i:1"><div class="next-inner next-empty">
-        <div class="next-title">Занятий нет</div>
+        <div class="next-title t-h3">Занятий нет</div>
         <p>Можно добавить занятие на этот день</p>
         <a class="btn" href="#/edit/new?date=${date}">Добавить занятие</a>
       </div></div>`;
     }
     if (rest.length) {
       html += `<div class="sheet-panel" style="--i:2">
-        <div class="sec-head"><h2>${isToday ? 'Занятия сегодня' : 'Другие занятия'}</h2><span class="badge tnum">${rest.length}</span></div>
+        <div class="sec-head"><h2 class="t-lm">${isToday ? 'Занятия сегодня' : 'Другие занятия'}</h2><span class="badge tnum">${rest.length}</span></div>
         <div class="lrows">${rest.map((l, i) => lessonRow(l, i)).join('')}</div>
       </div>`;
     }
@@ -434,7 +455,7 @@ SCREENS.home = () => {
 
   const strip = weekStrip(ui.date, d => switchDay(dayBox, () => fillDay(d)));
   $('[data-strip]', el).replaceWith(strip);
-  fillDay(ui.date, true);
+  fillDay(ui.date, !booted);
   return { el, mounted: () => { const s = $('.day.sel', strip); s && centerDay(strip, s, false); } };
 };
 
@@ -448,9 +469,9 @@ SCREENS.schedule = () => {
   const el = h(`<section class="screen tab-screen has-grad">
     <div class="screen-bg"></div>
     <div class="scroll">
-      <div class="pad" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:6px">
-        <button class="month-btn press" data-month aria-haspopup="dialog"></button>
-        <button class="chip press" data-today style="height:36px;padding:0 14px;font-size:14px">Сегодня</button>
+      <div class="pad" style="display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px">
+        <button class="month-btn t-h3 press" data-month aria-haspopup="dialog" style="display:inline-flex;align-items:center;gap:4px"></button>
+        <button class="chip press t-action" data-today style="height:36px;padding:0 12px">Сегодня</button>
       </div>
       <div data-strip></div>
       <div class="sheet-panel" style="margin-top:14px">
@@ -465,19 +486,16 @@ SCREENS.schedule = () => {
     const d = parseISO(date);
     monthBtn.innerHTML = `${MONTHS[d.getMonth()]} ${d.getFullYear()} ${I.down}`;
     const list = lessonsOn(date);
-    let html = `<div class="sec-head"><h2>${longDate(date)}</h2><span class="badge tnum">${list.length}</span></div>`;
+    let html = `<div class="sec-head"><h2 class="t-h4">${dayMonth(date)}</h2>${list.length ? `<span class="badge tnum">${list.length}</span>` : ''}</div>`;
     if (list.length) {
       html += `<div class="lrows ${initial ? 'stagger' : ''}">${list.map((l, i) => lessonRow(l, i)).join('')}</div>`;
     } else {
       const nd = nearestDayWithLessons(date);
       const ndd = nd && parseISO(nd);
       html += `<div class="empty">
-        <h3>В этот день занятий нет</h3>
-        <p>${nd ? `Ближайшее — ${WD_ACC[ndd.getDay()]}, ${dayMonth(nd)}` : 'Добавьте первое занятие'}</p>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          ${nd ? `<button class="btn secondary" data-jump="${nd}">Открыть ${dayMonth(nd)}</button>` : ''}
-          <a class="btn" href="#/edit/new?date=${date}">Добавить</a>
-        </div>
+        <h3 class="t-lm">В этот день занятий нет</h3>
+        <p class="t-mr">${nd ? `Ближайшее — ${WD_ACC[ndd.getDay()]}, ${dayMonth(nd)}` : 'Добавьте занятие через «+»'}</p>
+        ${nd ? `<button class="btn secondary" data-jump="${nd}">Открыть ${dayMonth(nd)}</button>` : `<a class="btn secondary" href="#/edit/new?date=${date}">Добавить занятие</a>`}
       </div>`;
     }
     dayBox.innerHTML = html;
@@ -496,7 +514,7 @@ SCREENS.schedule = () => {
   }
   strip = weekStrip(ui.date, d => switchDay(dayBox, () => fillDay(d)));
   $('[data-strip]', el).replaceWith(strip);
-  fillDay(ui.date, true);
+  fillDay(ui.date, !booted);
 
   dayBox.addEventListener('click', e => {
     const j = e.target.closest('[data-jump]');
@@ -525,13 +543,20 @@ const needsChoice = (l, sid, draft) => {
 function lessonHero(l) {
   return `<div class="hero">
     <small>${longDate(l.date)}</small>
-    <h2>${esc(l.title)}</h2>
+    <h2 class="t-h3">${esc(l.title)}</h2>
     <div class="meta tnum"><span>${l.start}–${l.end}</span><span>${esc(l.room || '')}</span></div>
   </div>`;
 }
 
+// shortcuts: #/lesson/next opens today's upcoming lesson, #/done/last the latest recorded one
+const resolveLesson = id => {
+  if (id === 'next') return nextLessonFor(todayISO()) || db.lessons.find(l => l.date >= todayISO() && !l.record);
+  if (id === 'last') return db.lessons.filter(l => l.record).sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start))[0];
+  return lesson(id);
+};
+
 SCREENS.lesson = r => {
-  const l = lesson(r.id);
+  const l = resolveLesson(r.id);
   if (!l) { replace('#/schedule'); return null; }
   const draft = getDraft(l);
   // students list for this lesson: current members plus anyone recorded earlier
@@ -543,15 +568,15 @@ SCREENS.lesson = r => {
     <div class="scroll">
       <header class="topbar">
         <button class="icon-btn" data-back aria-label="Назад">${I.back}</button>
-        <h1>Занятие</h1>
+        <h1 class="t-h3">Занятие</h1>
         <a class="icon-btn" href="#/edit/${l.id}" aria-label="Изменить занятие">${I.edit}</a>
       </header>
       ${lessonHero(l)}
       <section class="panel lesson-panel">
-        <div class="att-head"><h2>Пришли <span class="roll tnum" data-count><span>${draft.attended.size}</span></span> из ${total}</h2><button class="link-btn" data-reset ${draft.attended.size ? '' : 'hidden'}>Сбросить</button></div>
+        <div class="att-head"><h2 class="t-h2">Пришли <span class="roll tnum" data-count><span>${draft.attended.size}</span></span> из ${total}</h2><button class="link-btn" data-reset ${draft.attended.size ? '' : 'hidden'}>Сбросить</button></div>
         ${total <= 14 ? `<div class="dots" aria-hidden="true">${sids.map(() => '<i></i>').join('')}</div>` : '<div class="bar" aria-hidden="true"><i></i></div>'}
-        ${total ? '' : `<div class="empty"><h3>В занятии пока нет учеников</h3><p>Добавьте их в настройках занятия</p><a class="btn" href="#/edit/${l.id}">Добавить учеников</a></div>`}
-        <ul class="att-list stagger"></ul>
+        ${total ? '' : `<div class="empty"><h3 class="t-lm">В занятии пока нет учеников</h3><p>Добавьте их в настройках занятия</p><a class="btn" href="#/edit/${l.id}">Добавить учеников</a></div>`}
+        <ul class="att-list"></ul>
       </section>
     </div>
     <footer class="dock">
@@ -576,7 +601,7 @@ SCREENS.lesson = r => {
     const on = draft.attended.has(sid);
     const b = draft.billing[sid];
     if (!on) return `<span>${esc(studentStatus(s, l.date))}</span>`;
-    if (!b) return `<button class="chip warn" data-bill="${sid}">Выбрать учёт ${I.chev}</button>`;
+    if (!b) return `<button class="chip status" data-bill="${sid}">Выбрать учёт ${I.chev}</button>`;
     if (b.kind === 'sub') {
       const applied = l.record && (l.record.effects || []).some(e => e.sid === sid && e.t === 'sub');
       const left = s && s.plan ? (applied ? s.plan.left : s.plan.left - 1) : 0;
@@ -663,6 +688,7 @@ SCREENS.lesson = r => {
       if (prev) draft.billing[sid] = { ...prev };
       else if (hasActiveSub(s, l.date)) draft.billing[sid] = { kind: 'sub' };
     }
+    haptic();
     updateRow(sid);
     updateTop();
     updateDock();
@@ -710,6 +736,7 @@ SCREENS.lesson = r => {
     setTimeout(() => { mainBtn.innerHTML = `${I.spin}<span class="btn-label">Сохраняем…</span>`; mainBtn.classList.remove('swap'); }, 120);
     setTimeout(() => {
       applyRecord(l, draft);
+      haptic([10, 50, 14]);
       delete ui.drafts[l.id];
       replace(`#/done/${l.id}`);
     }, 1000);
@@ -719,7 +746,7 @@ SCREENS.lesson = r => {
 };
 
 SCREENS.done = r => {
-  const l = lesson(r.id);
+  const l = resolveLesson(r.id);
   if (!l) { replace('#/schedule'); return null; }
   if (!l.record) { replace(`#/lesson/${l.id}`); return null; }
   const rec = l.record;
@@ -727,7 +754,7 @@ SCREENS.done = r => {
   const s = summarize(l, draft);
   const total = Array.from(new Set([...l.studentIds, ...rec.attended])).length;
   const n = rec.attended.length;
-  const per = rec.attended.map(sid => {
+  const per = false && rec.attended.map(sid => {
     const st = student(sid); const b = rec.billing[sid] || {};
     let t = '';
     if (b.kind === 'sub') t = st && st.plan ? `Списано 1 занятие, ${plural(st.plan.left, 'остался', 'осталось', 'осталось')} ${st.plan.left}` : 'Списано 1 занятие';
@@ -741,20 +768,20 @@ SCREENS.done = r => {
     <div class="scroll">
       <header class="topbar">
         <button class="icon-btn" data-back aria-label="Назад">${I.back}</button>
-        <h1>Занятие</h1>
+        <h1 class="t-h3">Занятие</h1>
       </header>
       ${lessonHero(l)}
-      <section class="panel" style="margin-top:18px;padding:28px 24px 200px">
+      <section class="panel done-panel">
         <div class="done-icon">${I.check}</div>
-        <h2 class="done-title">${n ? 'Занятие учтено' : 'Посещаемость сохранена'}</h2>
-        <p class="done-sub">Пришли ${n} из ${total}</p>
-        <div class="kv tnum stagger">
+        <h2 class="done-title t-h2">${n ? 'Занятие учтено' : 'Посещаемость сохранена'}</h2>
+        <p class="done-sub t-meta">Пришли ${n} из ${total}</p>
+        <div class="kv tnum">
           <div style="--i:0"><span>Абонемент</span><b>${s.sub} ${plural(s.sub, 'занятие', 'занятия', 'занятий')}</b></div>
           ${s.newsub ? `<div style="--i:1"><span>Новые абонементы</span><b>${s.newsub}</b></div>` : ''}
           <div style="--i:2"><span>Получено</span><b>${money(s.paid)}</b></div>
           <div style="--i:3"><span>К оплате</span><b>${money(s.expected)}</b></div>
         </div>
-        ${per ? `<ul class="per">${per}</ul>` : '<p class="done-sub" style="margin-top:18px">Абонементы и оплаты не изменились</p>'}
+        ${n ? '' : '<p class="done-sub t-mr" style="margin-top:24px">Абонементы и оплаты не изменились</p>'}
       </section>
     </div>
     <footer class="dock">
@@ -772,7 +799,7 @@ SCREENS.students = () => {
   const el = h(`<section class="screen tab-screen has-grad">
     <div class="screen-bg" style="height:260px"></div>
     <div class="scroll">
-      <h1 class="page-title">Ученики</h1>
+      <h1 class="page-title t-h1">Ученики</h1>
       <label class="search"><span class="sr">Поиск</span>${I.search}<input type="search" placeholder="Имя ученика" autocomplete="off" value="${esc(ui.studentQuery)}"></label>
       <div class="sheet-panel" style="margin-top:14px;padding-top:12px">
         <ul class="srows"></ul>
@@ -786,8 +813,8 @@ SCREENS.students = () => {
     const list = db.students.filter(s => !q || s.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     if (!list.length) {
       listEl.innerHTML = db.students.length
-        ? `<li class="empty"><h3>Никого не нашли</h3><p>Проверьте написание или добавьте ученика</p><a class="btn" href="#/student/new">Добавить ученика</a></li>`
-        : `<li class="empty"><h3>Учеников пока нет</h3><p>Добавьте первого ученика</p><a class="btn" href="#/student/new">Добавить ученика</a></li>`;
+        ? `<li class="empty"><h3 class="t-lm">Никого не нашли</h3><p>Проверьте написание или добавьте ученика</p><a class="btn" href="#/student/new">Добавить ученика</a></li>`
+        : `<li class="empty"><h3 class="t-lm">Учеников пока нет</h3><p>Добавьте первого ученика</p><a class="btn" href="#/student/new">Добавить ученика</a></li>`;
     } else {
       listEl.innerHTML = list.map((s, i) => {
         const debt = unpaidOf(s.id).reduce((a, p) => a + p.amount, 0);
@@ -802,7 +829,7 @@ SCREENS.students = () => {
     listEl.classList.toggle('stagger', !!initial);
     typo(listEl);
   }
-  fill(true);
+  fill(!booted);
   $('input', el).addEventListener('input', e => { ui.studentQuery = e.target.value; fill(false); });
   const rb = $('[data-reset]', el);
   let armed = false;
@@ -832,7 +859,7 @@ SCREENS.student = r => {
     <div class="scroll">
       <header class="topbar">
         <button class="icon-btn" data-back aria-label="Назад">${I.back}</button>
-        <h1>${isNew ? 'Новый ученик' : 'Ученик'}</h1>
+        <h1 class="t-h3">${isNew ? 'Новый ученик' : 'Ученик'}</h1>
       </header>
       <form class="form" novalidate>
         <label class="field" data-f="name"><span>Имя и фамилия</span><input name="name" autocomplete="off" value="${esc(st.name)}" placeholder="Например, Анна Сергеева" maxlength="60"></label>
@@ -947,7 +974,7 @@ SCREENS.edit = r => {
     <div class="scroll">
       <header class="topbar">
         <button class="icon-btn" data-back aria-label="Назад">${I.back}</button>
-        <h1>${isNew ? 'Новое занятие' : 'Изменить занятие'}</h1>
+        <h1 class="t-h3">${isNew ? 'Новое занятие' : 'Изменить занятие'}</h1>
       </header>
       <form class="form" novalidate>
         <label class="field" data-f="title"><span>Название</span><input name="title" list="titles" autocomplete="off" value="${esc(base.title)}" placeholder="Например, Группа BASIC" maxlength="50"></label>
@@ -1068,7 +1095,7 @@ let activeSheet = null;
 function openSheet(firstPage) {
   if (activeSheet) activeSheet.close(true);
   const bd = h('<div class="backdrop"></div>');
-  const sh = h(`<div class="sheet" role="dialog" aria-modal="true"><div class="grab"><i></i><i class="off"></i></div><div class="sheet-viewport"></div></div>`);
+  const sh = h(`<div class="sheet" role="dialog" aria-modal="true" tabindex="-1"><div class="grab"><i></i><i class="off"></i></div><div class="sheet-viewport"></div></div>`);
   sheetRoot.append(bd, sh);
   const vp = $('.sheet-viewport', sh);
   const pages = [];
@@ -1148,13 +1175,13 @@ function openSheet(firstPage) {
   pages.push(firstPage);
   show(firstPage, 'fwd');
   requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('show'); sh.classList.add('show'); }));
-  setTimeout(() => { const f = sh.querySelector('button, [tabindex]'); f && f.focus({ preventScroll: true }); }, 60);
+  setTimeout(() => sh.focus({ preventScroll: true }), 60);
   activeSheet = api;
   return api;
 }
 
 function sheetHead(title, api, withBack) {
-  const head = h(`<div class="sheet-head">${withBack ? `<button class="icon-btn" data-sback aria-label="Назад">${I.back}</button>` : ''}<h3>${title}</h3><button class="icon-btn" data-sclose aria-label="Закрыть">${I.close}</button></div>`);
+  const head = h(`<div class="sheet-head">${withBack ? `<button class="icon-btn" data-sback aria-label="Назад">${I.back}</button>` : ''}<h3 class="t-h4">${title}</h3><button class="icon-btn" data-sclose aria-label="Закрыть">${I.close}</button></div>`);
   head.querySelector('[data-sclose]').addEventListener('click', () => api.close());
   const b = head.querySelector('[data-sback]');
   b && b.addEventListener('click', () => api.pop());
@@ -1192,7 +1219,7 @@ function openBilling(l, sid, draft, onDone) {
     wrap.appendChild(sheetHead('Разовое занятие', api, api.depth() >= 1));
     const body = h(`<div>
       <div class="sheet-sub" style="margin-bottom:0"><span>${esc(s ? s.name : '')}</span></div>
-      <div class="amount tnum">${money(PRICE_SINGLE)}</div>
+      <div class="amount t-display tnum">${money(PRICE_SINGLE)}</div>
       <div class="radios" role="radiogroup" style="margin-top:12px">
         <button class="radio" data-p="cash" role="radio"><span class="dot"></span><b>Наличные</b><span>Получено сейчас</span></button>
         <button class="radio" data-p="transfer" role="radio"><span class="dot"></span><b>Перевод</b><span>Получено сейчас</span></button>
@@ -1221,7 +1248,7 @@ function openBilling(l, sid, draft, onDone) {
     wrap.appendChild(sheetHead('Новый абонемент', api, api.depth() >= 1));
     const body = h(`<div>
       <div class="sheet-sub" style="margin-bottom:0"><span>${esc(s ? s.name : '')}</span></div>
-      <div class="amount tnum">${money(SUB_PRICE)}</div>
+      <div class="amount t-display tnum">${money(SUB_PRICE)}</div>
       <div class="amount-meta"><span class="chip soft">${SUB_COUNT} занятий</span><span class="chip soft">до ${dayMonth(addDays(l.date, SUB_DAYS))}</span></div>
       <div class="radios" role="radiogroup">
         <button class="radio" data-p="cash" role="radio"><span class="dot"></span><b>Наличные</b><span>Получено сейчас</span></button>
@@ -1250,7 +1277,7 @@ function openMonthSheet(date, onPick) {
   let view = parseISO(date); view.setDate(1);
   const page = api => {
     const wrap = document.createElement('div');
-    const head = h(`<div class="sheet-head"><h3 data-t></h3><button class="icon-btn" data-prev aria-label="Предыдущий месяц">${I.back}</button><button class="icon-btn" data-next aria-label="Следующий месяц" style="transform:scaleX(-1)">${I.back}</button><button class="icon-btn" data-sclose aria-label="Закрыть">${I.close}</button></div>`);
+    const head = h(`<div class="sheet-head"><h3 class="t-h3" data-t></h3><button class="icon-btn" data-prev aria-label="Предыдущий месяц">${I.back}</button><button class="icon-btn" data-next aria-label="Следующий месяц" style="transform:scaleX(-1)">${I.back}</button><button class="icon-btn" data-sclose aria-label="Закрыть">${I.close}</button></div>`);
     const grid = h('<div class="mgrid"></div>');
     const legend = h('<div class="legend"><span><i></i>Есть занятия</span><span><i class="warn"></i>Не учтено</span></div>');
     function fill() {
@@ -1335,3 +1362,126 @@ $('#navAdd').addEventListener('click', () => {
 window.addEventListener('hashchange', () => { if (activeSheet) activeSheet.close(true); render(); });
 if (!location.hash) history.replaceState(null, '', '#/');
 render();
+initSwipeBack();
+initPWA();
+
+/* ---------- edge swipe back (like a native stack) ---------- */
+function initSwipeBack() {
+  let g = null;
+  const W = () => app.clientWidth;
+  app.addEventListener('pointerdown', e => {
+    if (!current || isTab(current.route) || activeSheet || stack.length < 2) return;
+    if (e.pointerType === 'mouse') return;
+    const x = e.clientX - app.getBoundingClientRect().left;
+    if (x > 28) return;
+    g = { x0: e.clientX, y0: e.clientY, id: e.pointerId, started: false, lastX: e.clientX, lastT: performance.now(), v: 0 };
+  });
+  app.addEventListener('pointermove', e => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+    if (!g.started) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { g = null; return; }
+      if (dx < 10) return;
+      const r = parseRoute(stack[stack.length - 2]);
+      const scr = (SCREENS[r.name] || SCREENS.home)(r);
+      if (!scr) { g = null; return; }
+      typo(scr.el);
+      g.prev = scr; g.route = r; g.cur = current.el;
+      scr.el.style.transform = 'translate3d(-30%,0,0)';
+      scr.el.style.opacity = '.85';
+      app.insertBefore(scr.el, g.cur);
+      g.cur.classList.add('swiping', 'animating');
+      scr.el.classList.add('animating');
+      try { app.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      g.started = true;
+    }
+    const now = performance.now();
+    g.v = (e.clientX - g.lastX) / Math.max(1, now - g.lastT);
+    g.lastX = e.clientX; g.lastT = now;
+    const p = Math.max(0, Math.min(1, dx / W()));
+    g.cur.style.transform = `translate3d(${p * 100}%,0,0)`;
+    g.prev.el.style.transform = `translate3d(${-30 * (1 - p)}%,0,0)`;
+    g.prev.el.style.opacity = String(.85 + .15 * p);
+  });
+  const end = e => {
+    if (!g || e.pointerId !== g.id) return;
+    const st = g; g = null;
+    if (!st.started) return;
+    const p = (e.clientX - st.x0) / W();
+    const commit = p > .35 || st.v > .45;
+    const ease = 'transform .3s cubic-bezier(0.32, 0.72, 0, 1), opacity .3s ease';
+    st.cur.style.transition = ease; st.prev.el.style.transition = ease;
+    requestAnimationFrame(() => {
+      st.cur.style.transform = commit ? 'translate3d(100%,0,0)' : 'none';
+      st.prev.el.style.transform = commit ? 'none' : 'translate3d(-30%,0,0)';
+      st.prev.el.style.opacity = commit ? '1' : '.85';
+    });
+    setTimeout(() => {
+      st.prev.el.style.transition = st.prev.el.style.transform = st.prev.el.style.opacity = '';
+      st.prev.el.classList.remove('animating');
+      if (commit) {
+        st.cur.remove();
+        current = { el: st.prev.el, route: st.route };
+        st.prev.mounted && st.prev.mounted();
+        stack.pop();
+        skipRender = true;
+        history.back();
+        nav.classList.toggle('hidden', !isTab(st.route));
+        if (isTab(st.route)) setNav(st.route.name);
+      } else {
+        st.prev.el.remove();
+        st.cur.style.transition = st.cur.style.transform = '';
+        st.cur.classList.remove('swiping', 'animating');
+      }
+    }, 320);
+  };
+  app.addEventListener('pointerup', end);
+  app.addEventListener('pointercancel', end);
+}
+
+/* ---------- installable web app ---------- */
+function initPWA() {
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+  const splash = document.getElementById('splash');
+  if (splash) setTimeout(() => { splash.classList.add('hide'); setTimeout(() => splash.remove(), 350); }, isStandalone() ? 450 : 0);
+
+  let deferred = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; });
+  const KEY_DISMISS = 'tj-install-dismissed';
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(KEY_DISMISS) === '1'; } catch (e) { /* ignore */ }
+  const mobile = matchMedia('(pointer: coarse)').matches;
+  if (isStandalone() || dismissed || !mobile) return;
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  setTimeout(() => {
+    if (activeSheet || !current || !isTab(current.route)) return;
+    openSheet(api => {
+      const wrap = document.createElement('div');
+      wrap.appendChild(sheetHead('Установите приложение', api, false));
+      const body = h(`<div>
+        <p class="t-mr muted" style="margin:4px 0 20px">Журнал откроется с экрана «Домой» на весь экран и будет работать без интернета</p>
+        ${ios ? `<ol class="steps" style="padding:0;list-style:none">
+          <li><i>1</i><span>Нажмите «Поделиться» в панели Safari</span></li>
+          <li><i>2</i><span>Выберите «На экран “Домой”»</span></li>
+          <li><i>3</i><span>Нажмите «Добавить»</span></li>
+        </ol>` : ''}
+        <div class="sheet-actions">
+          ${!ios ? '<button class="btn" data-install>Установить</button>' : ''}
+          <button class="btn secondary" data-later>Не сейчас</button>
+        </div>
+      </div>`);
+      const close = () => { try { localStorage.setItem(KEY_DISMISS, '1'); } catch (e) { /* ignore */ } api.close(); };
+      body.addEventListener('click', async e => {
+        if (e.target.closest('[data-later]')) close();
+        if (e.target.closest('[data-install]')) {
+          if (deferred) { deferred.prompt(); try { await deferred.userChoice; } catch (err) { /* ignore */ } deferred = null; close(); }
+          else { close(); toast('Откройте меню браузера и выберите «Установить приложение»'); }
+        }
+      });
+      wrap.appendChild(body);
+      return wrap;
+    });
+  }, 1600);
+}
