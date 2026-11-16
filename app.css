@@ -176,13 +176,13 @@ ul { list-style: none; margin: 0; padding: 0; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fadeOut { to { opacity: 0; } }
 
-.stagger > * { animation: rise .4s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 40ms); }
-@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.stagger > *, .enter { animation: rise .5s var(--ease-out) both; animation-delay: calc((var(--base, 0) + var(--i, 0)) * 80ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); filter: blur(4px); } to { opacity: 1; transform: none; filter: blur(0); } }
 
 /* ---------- Common ---------- */
 .pad { padding-left: 16px; padding-right: 16px; }
 .press { transition: transform .16s var(--ease-out), background-color .2s ease; }
-.press:active { transform: scale(.97); }
+.press:active { transform: scale(.96); }
 
 .topbar { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 8px 0 16px; }
 .topbar h1 { flex: 1; min-width: 0; }
@@ -207,7 +207,7 @@ ul { list-style: none; margin: 0; padding: 0; }
   color: var(--on-contrast);
   transition: transform .16s var(--ease-out), background-color .2s ease, opacity .2s ease;
 }
-.btn:active { transform: scale(.97); }
+.btn:active { transform: scale(.96); }
 .btn.secondary { background: var(--bg-secondary); color: var(--ink); }
 .btn.danger { background: var(--danger-bg); color: var(--danger); }
 .btn.ghost { background: transparent; color: var(--muted); height: 44px; font-weight: 400; font-size: 14px; }
@@ -342,8 +342,9 @@ ul { list-style: none; margin: 0; padding: 0; }
 .empty p { color: var(--muted); margin: 2px 0 16px; }
 .empty .btn { height: 44px; font-size: 16px; font-weight: 400; }
 
-.day-switch { transition: opacity .14s ease, transform .24s var(--ease-out); }
-.day-switch.out { opacity: 0; transform: translateY(4px); }
+/* one-shot success mark inside the save button */
+.btn .ok-mark { width: 20px; height: 20px; animation: iconIn .3s cubic-bezier(0.2, 0, 0, 1) both; }
+@keyframes iconIn { from { opacity: 0; transform: scale(.25); filter: blur(4px); } to { opacity: 1; transform: none; filter: blur(0); } }
 
 /* ---------- Nav ---------- */
 .nav {
@@ -466,11 +467,13 @@ ul { list-style: none; margin: 0; padding: 0; }
   display: grid; place-items: center;
   transition: background-color .15s ease;
 }
-.check svg { width: 16px; height: 16px; color: #fff; }
-.check path { stroke-dasharray: 22; stroke-dashoffset: 22; transition: stroke-dashoffset .2s var(--ease-out); }
-.att-row.on .check, .pick.on .check { background: #000; animation: checkPop .26s var(--ease-out); }
-.att-row.on .check path, .pick.on .check path { stroke-dashoffset: 0; }
-@keyframes checkPop { 40% { transform: scale(.88); } }
+.check svg {
+  width: 16px; height: 16px; color: #fff;
+  opacity: 0; transform: scale(.25); filter: blur(4px);
+  transition: opacity .3s cubic-bezier(0.2, 0, 0, 1), transform .3s cubic-bezier(0.2, 0, 0, 1), filter .3s cubic-bezier(0.2, 0, 0, 1);
+}
+.att-row.on .check, .pick.on .check { background: #000; }
+.att-row.on .check svg, .pick.on .check svg { opacity: 1; transform: none; filter: blur(0); }
 
 .dock {
   position: absolute; left: 0; right: 0; bottom: 0;
@@ -490,12 +493,9 @@ ul { list-style: none; margin: 0; padding: 0; }
   width: 64px; height: 64px; border-radius: var(--r-24);
   background: var(--bg-success); color: #000;
   display: grid; place-items: center;
-  animation: popIcon .45s var(--ease-out) both .08s;
 }
 .done-icon svg { width: 24px; height: 24px; }
-.done-icon path { stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw .4s var(--ease-out) forwards .3s; }
-@keyframes popIcon { from { transform: scale(.75); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes draw { to { stroke-dashoffset: 0; } }
+.done-icon svg { animation: iconIn .35s cubic-bezier(0.2, 0, 0, 1) both .18s; }
 .done-title { margin-top: 36px; }
 .done-sub { color: var(--muted); margin-top: 8px; }
 .kv { margin-top: 24px; display: flex; flex-direction: column; gap: 20px; }

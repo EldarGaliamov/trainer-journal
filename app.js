@@ -343,8 +343,9 @@ function weekStrip(selected, onSelect) {
     const d = b.dataset.d;
     if (d === ui.date) return;
     $$('.day', el).forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-pressed', x === b); });
+    const dir = d > ui.date ? 1 : -1;
     ui.date = d;
-    onSelect(d);
+    onSelect(d, dir);
     centerDay(el, b, true);
   });
   return el;
@@ -455,16 +456,28 @@ SCREENS.home = () => {
     typo(dayBox);
   }
 
-  const strip = weekStrip(ui.date, d => switchDay(dayBox, () => fillDay(d)));
+  const strip = weekStrip(ui.date, (d, dir) => switchDay(dayBox, () => fillDay(d), dir));
   $('[data-strip]', el).replaceWith(strip);
   fillDay(ui.date, !booted);
   return { el, mounted: () => { const s = $('.day.sel', strip); s && centerDay(strip, s, false); } };
 };
 
-function switchDay(box, fill) {
+// Content follows the date: later days come in from the right, earlier from the left.
+function switchDay(box, fill, dir = 1) {
   if (reduceMotion()) { fill(); return; }
-  box.classList.add('out');
-  setTimeout(() => { fill(); requestAnimationFrame(() => box.classList.remove('out')); }, 140);
+  clearTimeout(box._t);
+  box.style.transition = 'opacity .12s ease, transform .12s var(--ease-out)';
+  box.style.opacity = '0';
+  box.style.transform = `translate3d(${-dir * 12}px,0,0)`;
+  box._t = setTimeout(() => {
+    fill();
+    box.style.transition = 'none';
+    box.style.transform = `translate3d(${dir * 16}px,0,0)`;
+    void box.offsetWidth;
+    box.style.transition = 'opacity .24s ease, transform .32s var(--ease-out)';
+    box.style.opacity = '1';
+    box.style.transform = 'none';
+  }, 120);
 }
 
 SCREENS.schedule = () => {
@@ -506,15 +519,16 @@ SCREENS.schedule = () => {
 
   let strip;
   function setDate(dd, rebuildStrip) {
+    const dir = dd > ui.date ? 1 : -1;
     ui.date = dd;
     if (rebuildStrip) {
-      const ns = weekStrip(ui.date, d => switchDay(dayBox, () => fillDay(d)));
+      const ns = weekStrip(ui.date, (d, dir) => switchDay(dayBox, () => fillDay(d), dir));
       strip.replaceWith(ns); strip = ns;
       requestAnimationFrame(() => { const s = $('.day.sel', strip); s && centerDay(strip, s, false); });
     }
-    switchDay(dayBox, () => fillDay(dd));
+    switchDay(dayBox, () => fillDay(dd), dir);
   }
-  strip = weekStrip(ui.date, d => switchDay(dayBox, () => fillDay(d)));
+  strip = weekStrip(ui.date, (d, dir) => switchDay(dayBox, () => fillDay(d), dir));
   $('[data-strip]', el).replaceWith(strip);
   fillDay(ui.date, !booted);
 
@@ -740,8 +754,9 @@ SCREENS.lesson = r => {
       applyRecord(l, draft);
       haptic([10, 50, 14]);
       delete ui.drafts[l.id];
-      replace(`#/done/${l.id}`);
-    }, 1000);
+      mainBtn.innerHTML = `<span class="ok-mark">${I.check}</span><span class="btn-label">Сохранено</span>`;
+      setTimeout(() => replace(`#/done/${l.id}`), reduceMotion() ? 0 : 420);
+    }, 900);
   });
 
   return { el };
@@ -774,10 +789,10 @@ SCREENS.done = r => {
       </header>
       ${lessonHero(l)}
       <section class="panel done-panel">
-        <div class="done-icon">${I.check}</div>
-        <h2 class="done-title t-h2">${n ? 'Занятие учтено' : 'Посещаемость сохранена'}</h2>
-        <p class="done-sub t-meta">Пришли ${n} из ${total}</p>
-        <div class="kv tnum">
+        <div class="done-icon enter" style="--i:0">${I.check}</div>
+        <h2 class="done-title t-h2 enter" style="--i:1">${n ? 'Занятие учтено' : 'Посещаемость сохранена'}</h2>
+        <p class="done-sub t-meta enter" style="--i:2">Пришли ${n} из ${total}</p>
+        <div class="kv tnum stagger" style="--base:3">
           <div style="--i:0"><span>Абонемент</span><b>${s.sub} ${plural(s.sub, 'занятие', 'занятия', 'занятий')}</b></div>
           ${s.newsub ? `<div style="--i:1"><span>Новые абонементы</span><b>${s.newsub}</b></div>` : ''}
           <div style="--i:2"><span>Получено</span><b>${money(s.paid)}</b></div>
